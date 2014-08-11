@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: ruby | Chris on Software]]></title>
+  <link href="http://Chris911.github.io/blog/categories/ruby/atom.xml" rel="self"/>
+  <link href="http://Chris911.github.io/"/>
+  <updated>2014-08-11T17:54:17-04:00</updated>
+  <id>http://Chris911.github.io/</id>
+  <author>
+    <name><![CDATA[Christophe Naud-Dulude]]></name>
+    
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Writing a Ruby gem with C extension]]></title>
+    <link href="http://Chris911.github.io/blog/2014/08/10/writing-a-ruby-gem-with-c-extension/"/>
+    <updated>2014-08-10T17:37:00-04:00</updated>
+    <id>http://Chris911.github.io/blog/2014/08/10/writing-a-ruby-gem-with-c-extension</id>
+    <content type="html"><![CDATA[<p>A couple months ago I sat down for a weekend and wrote my first Ruby gem with a C extension. <a href="https://github.com/Chris911/iStats">iStats</a> is a command-line tool that allows you to easily grab the CPU temperature, fan speeds and battery information on OS X. The only way to access most of these metrics is via Apple's <a href="https://developer.apple.com/library/mac/documentation/devicedrivers/conceptual/IOKitFundamentals/Introduction/Introduction.html">I/O Kit</a>. The framework provides an abstract view of the system hardware to the upper layers of OS X and is mostly written in C. Therefore, I had to write the core of this gem in C but can still handle user input and the console output in Ruby. This blog post details how to write a Ruby gem with a C extension based on the iStats code.</p>
+
+<!-- more -->
+
+
+<h3>Directory Structure</h3>
+
+<p>I always like to start a new gem using <code>bundle</code> to create the directory structure. Running <code>bundle gem my_gem</code> will get you a good starting directory structure. However, since we are writing a gem with a C extension we also want to add a folder for the C code. By convention, this folder is named <code>ext</code> and is placed at the root of the directory structure. This is the directory tree for my iStats gem:
+```
+iStats/</p>
+
+<pre><code>Gemfile
+Gemfile.lock
+LICENSE
+README.md
+Rakefile
+bin
+</code></pre>
+
+<p>    └── istats</p>
+
+<pre><code>ext
+</code></pre>
+
+<p>    └── osx_stats
+        ├── extconf.rb
+        ├── smc.c
+        └── smc.h</p>
+
+<pre><code>iStats.gemspec
+lib
+</code></pre>
+
+<p>    ├── iStats
+    │   ├── command.rb
+    │   ├── cpu.rb
+    │   ├── [...]
+    └── istats.rb
+```</p>
+
+<h3>C code and Makefile</h3>
+
+<p>As mentioned previously, the C code is located under the <code>ext</code> directory. Each C module should have its own subdirectory in there. Note that this directory also contains another important file named <code>extconf.rb</code>. The content of this file is executed when installing the gem to generate a <code>Makefile</code> that will be used to compile the C extension. Here's a basic example:
+<div class='bogus-wrapper'><notextile><figure class='code'> <div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='ruby'><span class='line'><span class="nb">require</span> <span class="s1">&#39;mkmf&#39;</span><span class="o">&lt;</span><span class="sr">/p&gt;</span>
+</span><span class='line'>
+</span><span class='line'><span class="sr">&lt;p&gt;extension_name = &#39;osx_stats&#39;&lt;/</span><span class="nb">p</span><span class="o">&gt;</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&lt;</span><span class="nb">p</span><span class="o">&gt;</span><span class="no">CONFIG</span><span class="o">[</span><span class="s1">&#39;LDSHARED&#39;</span><span class="o">]</span> <span class="o">&amp;</span><span class="n">lt</span><span class="p">;</span><span class="o">&amp;</span><span class="n">lt</span><span class="p">;</span> <span class="s1">&#39; -framework IOKit -framework CoreFoundation &#39;</span><span class="o">&lt;</span><span class="sr">/p&gt;</span>
+</span><span class='line'>
+</span><span class='line'><span class="sr">&lt;p&gt;dir_config(extension_name)       # The destination</span>
+</span><span class='line'><span class="sr">create_makefile(extension_name)  # Create Makefile</span>
+</span></code></pre></td></tr></table></div></figure></notextile></div></p>
+
+<p>And here's the <a href="https://gist.github.com/Chris911/6faa9e0bed37f96f9b0a">generated Makefile</a>. As this is the file that will be used to compile your code when someone installs the gem you should always make sure it compiles properly. Also keep in mind that the generated <code>Makefile</code> will be different depending on the Ruby version so it's a good idea to try installing your gem against all major versions.</p>
+
+<p>On top of your regular C code, you also need to map your C functions to Ruby modules and methods. To do this you need to include <code>ruby.h</code> and must have functions named <code>void Init_MODULE_NAME()</code> for each module. These functions are responsible for initializing the Ruby modules and defining your methods. You never call theses functions directly but they will be executed when you require the module in a Ruby project. Here's what it looks like for the <code>get_cpu_temp</code> Ruby method that gets the CPU temperature as a C double and returns a Ruby float object.<br/>
+<div class='bogus-wrapper'><notextile><figure class='code'> <div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+</pre></td><td class='code'><pre><code class='c'><span class='line'><span class="n">VALUE</span> <span class="n">CPU_STATS</span> <span class="o">=</span> <span class="n">Qnil</span><span class="p">;</span>  <span class="o">/&lt;</span><span class="n">em</span><span class="o">&gt;</span> <span class="n">Ruby</span> <span class="n">Module</span> <span class="o">&lt;/</span><span class="n">em</span><span class="o">&gt;/&lt;/</span><span class="n">p</span><span class="o">&gt;</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&lt;</span><span class="n">p</span><span class="o">&gt;</span><span class="kt">void</span> <span class="n">Init_osx_stats</span><span class="p">()</span> <span class="p">{</span><span class="o">&lt;/</span><span class="n">p</span><span class="o">&gt;</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&lt;</span><span class="n">pre</span><span class="o">&gt;&lt;</span><span class="n">code</span><span class="o">&gt;</span><span class="n">CPU_STATS</span> <span class="o">=</span> <span class="n">rb_define_module</span><span class="p">(</span><span class="s">&quot;CPU_STATS&quot;</span><span class="p">);</span>
+</span><span class='line'><span class="n">rb_define_method</span><span class="p">(</span><span class="n">CPU_STATS</span><span class="p">,</span> <span class="s">&quot;get_cpu_temp&quot;</span><span class="p">,</span> <span class="n">method_get_cpu_temp</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span><span class='line'><span class="o">&lt;/</span><span class="n">code</span><span class="o">&gt;&lt;/</span><span class="n">pre</span><span class="o">&gt;</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&lt;</span><span class="n">p</span><span class="o">&gt;</span><span class="p">}</span><span class="o">&lt;/</span><span class="n">p</span><span class="o">&gt;</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&lt;</span><span class="n">p</span><span class="o">&gt;</span><span class="n">VALUE</span> <span class="n">method_get_cpu_temp</span><span class="p">(</span><span class="n">VALUE</span> <span class="n">self</span><span class="p">)</span> <span class="p">{</span><span class="o">&lt;/</span><span class="n">p</span><span class="o">&gt;</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&lt;</span><span class="n">pre</span><span class="o">&gt;&lt;</span><span class="n">code</span><span class="o">&gt;</span><span class="n">SMCOpen</span><span class="p">();</span>
+</span><span class='line'><span class="kt">double</span> <span class="n">temp</span> <span class="o">=</span> <span class="n">SMCGetTemperature</span><span class="p">(</span><span class="n">SMC_KEY_CPU_TEMP</span><span class="p">);</span>
+</span><span class='line'><span class="n">SMCClose</span><span class="p">();</span>
+</span><span class='line'>
+</span><span class='line'><span class="k">return</span> <span class="nf">rb_float_new</span><span class="p">(</span><span class="n">temp</span><span class="p">);</span>  <span class="cm">/* Convert C double to Ruby float */</span>
+</span><span class='line'><span class="o">&lt;/</span><span class="n">code</span><span class="o">&gt;&lt;/</span><span class="n">pre</span><span class="o">&gt;</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&lt;</span><span class="n">p</span><span class="o">&gt;</span><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure></notextile></div>
+Here's a great <a href="http://blog.jacius.info/ruby-c-extension-cheat-sheet/">cheat sheet for Ruby C extensions</a> that shows the possible mappings between C types and Ruby objects. For a more complete example you can take a look at <a href="https://github.com/Chris911/iStats/blob/master/ext/osx_stats/smc.c#L318-L414">the Ruby modules section</a> of my iStats gem.</p>
+
+<h3>Calling C Functions in Ruby</h3>
+
+<p>If you followed the conventions detailed in the previous section calling your C functions in Ruby should be pretty straightforward. In the example above, we have a module called <code>CPU_STATS</code> that defines a method called <code>get_cpu_temp</code>. We cannot directly include a C file in Ruby so we need to build the module first. You can use utilities like <a href="https://github.com/luislavena/rake-compiler">Rake-Compiler</a> for this or write your own Rake task. Here are the steps to compile and link your C module:
+<div class='bogus-wrapper'><notextile><figure class='code'> <div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">cd </span>GEM_PATH/ext/EXTENSION_NAME&lt;/p&gt;
+</span><span class='line'>
+</span><span class='line'>&lt;p&gt;<span class="nv">$ </span>ruby extconf.rb
+</span><span class='line'>creating Makefile&lt;/p&gt;
+</span><span class='line'>
+</span><span class='line'>&lt;p&gt;<span class="nv">$ </span>make&lt;/p&gt;
+</span><span class='line'>
+</span><span class='line'>&lt;p&gt;<span class="nv">$ </span>cp extension.bundle GEM_PATH/lib
+</span></code></pre></td></tr></table></div></figure></notextile></div>
+I suggest you wrap these commands in a Rake task as you will need to do this every time you change the C code. Once the .bundle file is in place, you can include it like any other Ruby library. Continuing with our previous example, here's a simple script that uses our C extension:
+<div class='bogus-wrapper'><notextile><figure class='code'> <div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='ruby'><span class='line'><span class="nb">require</span> <span class="s1">&#39;osx_stats&#39;</span>        <span class="c1"># Require the C module osx_stats.bundle&lt;/p&gt;</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&lt;</span><span class="nb">p</span><span class="o">&gt;</span><span class="kp">include</span> <span class="no">CPU_STATS</span>          <span class="c1"># Include the defined module&lt;/p&gt;</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&lt;</span><span class="nb">p</span><span class="o">&gt;</span><span class="n">t</span> <span class="o">=</span> <span class="n">get_cpu_temp</span>           <span class="c1"># Call defined C function&lt;/p&gt;</span>
+</span><span class='line'>
+</span><span class='line'><span class="o">&lt;</span><span class="nb">p</span><span class="o">&gt;</span><span class="nb">puts</span> <span class="s2">&quot;CPU temp: </span><span class="si">#{</span><span class="n">t</span><span class="si">}</span><span class="s2">&quot;</span>      <span class="c1"># Use result in Ruby code</span>
+</span></code></pre></td></tr></table></div></figure></notextile></div></p>
+
+<h3>Gemfile</h3>
+
+<p><a href="http://rubygems.org/">RubyGems.com</a> has a great <a href="http://guides.rubygems.org/">list of guides</a> on how to get started with Ruby gems and gemfiles. However, there is one extra instruction you have to add to your gemfile when dealing with C extensions. Basically, you have to let the gem installer know there is some C code to compile as part of the installation. Add this line in your gem specification:</p>
+
+<p><div class='bogus-wrapper'><notextile><figure class='code'> <div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='ruby'><span class='line'><span class="n">spec</span> <span class="o">=</span> <span class="ss">Gem</span><span class="p">:</span><span class="ss">:Specification</span><span class="o">.</span><span class="n">new</span> <span class="k">do</span> <span class="o">|</span><span class="n">s</span><span class="o">|</span>
+</span><span class='line'>  <span class="o">[.</span><span class="n">.</span><span class="o">.]</span>
+</span><span class='line'>  <span class="n">s</span><span class="o">.</span><span class="n">extensions</span> <span class="o">=</span> <span class="no">FileList</span><span class="o">[</span><span class="s2">&quot;ext/**/extconf.rb&quot;</span><span class="o">]</span>
+</span><span class='line'><span class="k">end</span>
+</span></code></pre></td></tr></table></div></figure></notextile></div></p>
+
+<h3>Going Further</h3>
+
+<p>This guide should get your started with C extensions for Ruby gems. If you want to go further and make sure your code works across versions and is cross-platform or use add extensions in other languages like Java, here are a few useful guides and libraries you'll probably need:</p>
+
+<ul>
+<li><a href="https://github.com/luislavena/rake-compiler">Rake-Compiler</a></li>
+<li><a href="http://guides.rubygems.org/gems-with-extensions/">Gems with Extensions</a></li>
+<li><a href="https://www.ibm.com/developerworks/library/os-extendruby/">Building Ruby extensions in C++ using Rice</a></li>
+</ul>
+
+]]></content>
+  </entry>
+  
+</feed>

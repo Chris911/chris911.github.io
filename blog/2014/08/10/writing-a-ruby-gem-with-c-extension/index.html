@@ -1,0 +1,489 @@
+
+<!DOCTYPE html>
+<!--[if IEMobile 7 ]><html class="no-js iem7"><![endif]-->
+<!--[if lt IE 9]><html class="no-js lte-ie8"><![endif]-->
+<!--[if (gt IE 8)|(gt IEMobile 7)|!(IEMobile)|!(IE)]><!--><html class="no-js" lang="en"><!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <title>Writing a Ruby gem with C extension - Chris on Software</title>
+  <meta name="author" content="Christophe Naud-Dulude">
+
+  
+  <meta name="description" content="A couple months ago I sat down for a weekend and wrote my first Ruby gem with a C extension. iStats is a command-line tool that allows you to easily &hellip;">
+  
+
+  <!-- http://t.co/dKP3o1e -->
+  <meta name="HandheldFriendly" content="True">
+  <meta name="MobileOptimized" content="320">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  
+  <link rel="canonical" href="http://Chris911.github.io/blog/2014/08/10/writing-a-ruby-gem-with-c-extension/">
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+  <script src="/javascripts/modernizr-2.0.js"></script>
+  <script src="/javascripts/ender.js"></script>
+  <script src="/javascripts/octopress.js" type="text/javascript"></script>
+  <link href="/atom.xml" rel="alternate" title="Chris on Software" type="application/atom+xml">
+  <!--Fonts from Google"s Web font directory at http://google.com/webfonts -->
+<link href="http://fonts.googleapis.com/css?family=PT+Serif:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+<link href="http://fonts.googleapis.com/css?family=PT+Sans:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+<link href="http://fonts.googleapis.com/css?family=Lobster" rel="stylesheet" type="text/css">
+
+  
+  <script type="text/javascript">
+    var _gaq = _gaq || [];
+    _gaq.push(['_setAccount', 'UA-53413946-1']);
+    _gaq.push(['_trackPageview']);
+
+    (function() {
+      var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+      ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+      var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+    })();
+  </script>
+
+
+</head>
+
+<body>
+  <header role="banner"><hgroup>
+  <h1><a href="/">Chris on Software</a></h1>
+  
+    <h2>The art of computer programming.</h2>
+  
+</hgroup>
+
+</header>
+  <div id="navigation">
+    <nav role="navigation"><ul class="subscription" data-subscription="rss">
+  <li><a href="/atom.xml" rel="subscribe-rss" title="subscribe via RSS">RSS</a></li>
+  
+</ul>
+  
+<form action="http://google.com/search" method="get">
+  <fieldset role="search">
+    <input type="hidden" name="q" value="site:Chris911.github.io" />
+    <input class="search" type="text" name="q" results="0" placeholder="Search"/>
+  </fieldset>
+</form>
+  
+<ul class="main-navigation">
+  <li><a href="/">Blog</a></li>
+  <li><a href="/blog/archives">Archives</a></li>
+  <li><a href="/about">About</a></li></ul>
+</ul>
+
+</nav>
+  </div>
+  <div id="body"  >
+    <div id="main">
+      <div id="content">
+        <div>
+<article class="hentry" role="article">
+  
+  <header>
+    
+      <h1 class="entry-title">Writing a Ruby Gem With C Extension</h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+
+
+
+
+  
+
+
+<time datetime="2014-08-10T17:37:00-04:00" pubdate data-updated="true">Aug 10<span>th</span>, 2014</time>
+        
+      </p>
+    
+  </header>
+
+
+<div class="entry-content"><p>A couple months ago I sat down for a weekend and wrote my first Ruby gem with a C extension. <a href="https://github.com/Chris911/iStats">iStats</a> is a command-line tool that allows you to easily grab the CPU temperature, fan speeds and battery information on OS X. The only way to access most of these metrics is via Apple&#8217;s <a href="https://developer.apple.com/library/mac/documentation/devicedrivers/conceptual/IOKitFundamentals/Introduction/Introduction.html">I/O Kit</a>. The framework provides an abstract view of the system hardware to the upper layers of OS X and is mostly written in C. Therefore, I had to write the core of this gem in C but can still handle user input and the console output in Ruby. This blog post details how to write a Ruby gem with a C extension based on the iStats code.</p>
+
+<!-- more -->
+
+
+<h3>Directory Structure</h3>
+
+<p>I always like to start a new gem using <code>bundle</code> to create the directory structure. Running <code>bundle gem my_gem</code> will get you a good starting directory structure. However, since we are writing a gem with a C extension we also want to add a folder for the C code. By convention, this folder is named <code>ext</code> and is placed at the root of the directory structure. This is the directory tree for my iStats gem:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+</pre></td><td class='code'><pre><code class=''><span class='line'>iStats/
+</span><span class='line'>    Gemfile
+</span><span class='line'>    Gemfile.lock
+</span><span class='line'>    LICENSE
+</span><span class='line'>    README.md
+</span><span class='line'>    Rakefile
+</span><span class='line'>    bin
+</span><span class='line'>    └── istats
+</span><span class='line'>    ext
+</span><span class='line'>    └── osx_stats
+</span><span class='line'>        ├── extconf.rb
+</span><span class='line'>        ├── smc.c
+</span><span class='line'>        └── smc.h
+</span><span class='line'>    iStats.gemspec
+</span><span class='line'>    lib
+</span><span class='line'>    ├── iStats
+</span><span class='line'>    │   ├── command.rb
+</span><span class='line'>    │   ├── cpu.rb
+</span><span class='line'>    │   ├── [...]
+</span><span class='line'>    └── istats.rb</span></code></pre></td></tr></table></div></figure>
+
+
+<h3>C code and Makefile</h3>
+
+<p>As mentioned previously, the C code is located under the <code>ext</code> directory. Each C module should have its own subdirectory in there. Note that this directory also contains another important file named <code>extconf.rb</code>. The content of this file is executed when installing the gem to generate a <code>Makefile</code> that will be used to compile the C extension. Here&#8217;s a basic example:</p>
+
+<figure class='code'> <div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='ruby'><span class='line'><span class="nb">require</span> <span class="s1">&#39;mkmf&#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">extension_name</span> <span class="o">=</span> <span class="s1">&#39;osx_stats&#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="no">CONFIG</span><span class="o">[</span><span class="s1">&#39;LDSHARED&#39;</span><span class="o">]</span> <span class="o">&lt;&lt;</span> <span class="s1">&#39; -framework IOKit -framework CoreFoundation &#39;</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">dir_config</span><span class="p">(</span><span class="n">extension_name</span><span class="p">)</span>       <span class="c1"># The destination</span>
+</span><span class='line'><span class="n">create_makefile</span><span class="p">(</span><span class="n">extension_name</span><span class="p">)</span>  <span class="c1"># Create Makefile</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And here&#8217;s the <a href="https://gist.github.com/Chris911/6faa9e0bed37f96f9b0a">generated Makefile</a>. As this is the file that will be used to compile your code when someone installs the gem you should always make sure it compiles properly. Also keep in mind that the generated <code>Makefile</code> will be different depending on the Ruby version so it&#8217;s a good idea to try installing your gem against all major versions.</p>
+
+<p>On top of your regular C code, you also need to map your C functions to Ruby modules and methods. To do this you need to include <code>ruby.h</code> and must have functions named <code>void Init_MODULE_NAME()</code> for each module. These functions are responsible for initializing the Ruby modules and defining your methods. You never call theses functions directly but they will be executed when you require the module in a Ruby project. Here&#8217;s what it looks like for the <code>get_cpu_temp</code> Ruby method that gets the CPU temperature as a C double and returns a Ruby float object.</p>
+
+<figure class='code'> <div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class='c'><span class='line'><span class="n">VALUE</span> <span class="n">CPU_STATS</span> <span class="o">=</span> <span class="n">Qnil</span><span class="p">;</span>  <span class="cm">/* Ruby Module */</span>
+</span><span class='line'>
+</span><span class='line'><span class="kt">void</span> <span class="nf">Init_osx_stats</span><span class="p">()</span> <span class="p">{</span>
+</span><span class='line'>    <span class="n">CPU_STATS</span> <span class="o">=</span> <span class="n">rb_define_module</span><span class="p">(</span><span class="s">&quot;CPU_STATS&quot;</span><span class="p">);</span>
+</span><span class='line'>    <span class="n">rb_define_method</span><span class="p">(</span><span class="n">CPU_STATS</span><span class="p">,</span> <span class="s">&quot;get_cpu_temp&quot;</span><span class="p">,</span> <span class="n">method_get_cpu_temp</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</span><span class='line'><span class="p">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">VALUE</span> <span class="nf">method_get_cpu_temp</span><span class="p">(</span><span class="n">VALUE</span> <span class="n">self</span><span class="p">)</span> <span class="p">{</span>
+</span><span class='line'>    <span class="n">SMCOpen</span><span class="p">();</span>
+</span><span class='line'>    <span class="kt">double</span> <span class="n">temp</span> <span class="o">=</span> <span class="n">SMCGetTemperature</span><span class="p">(</span><span class="n">SMC_KEY_CPU_TEMP</span><span class="p">);</span>
+</span><span class='line'>    <span class="n">SMCClose</span><span class="p">();</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="k">return</span> <span class="n">rb_float_new</span><span class="p">(</span><span class="n">temp</span><span class="p">);</span>  <span class="cm">/* Convert C double to Ruby float */</span>
+</span><span class='line'><span class="p">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Here&#8217;s a great <a href="http://blog.jacius.info/ruby-c-extension-cheat-sheet/">cheat sheet for Ruby C extensions</a> that shows the possible mappings between C types and Ruby objects. For a more complete example you can take a look at <a href="https://github.com/Chris911/iStats/blob/master/ext/osx_stats/smc.c#L318-L414">the Ruby modules section</a> of my iStats gem.</p>
+
+<h3>Calling C Functions in Ruby</h3>
+
+<p>If you followed the conventions detailed in the previous section calling your C functions in Ruby should be pretty straightforward. In the example above, we have a module called <code>CPU_STATS</code> that defines a method called <code>get_cpu_temp</code>. We cannot directly include a C file in Ruby so we need to build the module first. You can use utilities like <a href="https://github.com/luislavena/rake-compiler">Rake-Compiler</a> for this or write your own Rake task. Here are the steps to compile and link your C module:</p>
+
+<figure class='code'> <div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'><span class="nv">$ </span><span class="nb">cd </span>GEM_PATH/ext/EXTENSION_NAME
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>ruby extconf.rb
+</span><span class='line'>creating Makefile
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>make
+</span><span class='line'>
+</span><span class='line'><span class="nv">$ </span>cp extension.bundle GEM_PATH/lib
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>I suggest you wrap these commands in a Rake task as you will need to do this every time you change the C code. Once the .bundle file is in place, you can include it like any other Ruby library. Continuing with our previous example, here&#8217;s a simple script that uses our C extension:</p>
+
+<figure class='code'> <div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='ruby'><span class='line'><span class="nb">require</span> <span class="s1">&#39;osx_stats&#39;</span>        <span class="c1"># Require the C module osx_stats.bundle</span>
+</span><span class='line'>
+</span><span class='line'><span class="kp">include</span> <span class="no">CPU_STATS</span>          <span class="c1"># Include the defined module</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">t</span> <span class="o">=</span> <span class="n">get_cpu_temp</span>           <span class="c1"># Call defined C function</span>
+</span><span class='line'>
+</span><span class='line'><span class="nb">puts</span> <span class="s2">&quot;CPU temp: </span><span class="si">#{</span><span class="n">t</span><span class="si">}</span><span class="s2">&quot;</span>      <span class="c1"># Use result in Ruby code</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h3>Gemfile</h3>
+
+<p><a href="http://rubygems.org/">RubyGems.com</a> has a great <a href="http://guides.rubygems.org/">list of guides</a> on how to get started with Ruby gems and gemfiles. However, there is one extra instruction you have to add to your gemfile when dealing with C extensions. Basically, you have to let the gem installer know there is some C code to compile as part of the installation. Add this line in your gem specification:</p>
+
+<figure class='code'> <div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='ruby'><span class='line'><span class="n">spec</span> <span class="o">=</span> <span class="ss">Gem</span><span class="p">:</span><span class="ss">:Specification</span><span class="o">.</span><span class="n">new</span> <span class="k">do</span> <span class="o">|</span><span class="n">s</span><span class="o">|</span>
+</span><span class='line'>  <span class="o">[.</span><span class="n">.</span><span class="o">.]</span>
+</span><span class='line'>  <span class="n">s</span><span class="o">.</span><span class="n">extensions</span> <span class="o">=</span> <span class="no">FileList</span><span class="o">[</span><span class="s2">&quot;ext/**/extconf.rb&quot;</span><span class="o">]</span>
+</span><span class='line'><span class="k">end</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h3>Going Further</h3>
+
+<p>This guide should get your started with C extensions for Ruby gems. If you want to go further and make sure your code works across versions and is cross-platform or use add extensions in other languages like Java, here are a few useful guides and libraries you&#8217;ll probably need:</p>
+
+<ul>
+<li><a href="https://github.com/luislavena/rake-compiler">Rake-Compiler</a></li>
+<li><a href="http://guides.rubygems.org/gems-with-extensions/">Gems with Extensions</a></li>
+<li><a href="https://www.ibm.com/developerworks/library/os-extendruby/">Building Ruby extensions in C++ using Rice</a></li>
+</ul>
+
+</div>
+
+
+  <footer>
+    <p class="meta">
+      
+  
+
+<span class="byline author vcard">Posted by <span class="fn">Christophe Naud-Dulude</span></span>
+
+      
+
+
+
+
+
+
+
+
+  
+
+
+<time datetime="2014-08-10T17:37:00-04:00" pubdate data-updated="true">Aug 10<span>th</span>, 2014</time>
+      
+
+<span class="categories">
+  
+    <a class='category' href='/blog/categories/c/'>c</a>, <a class='category' href='/blog/categories/gem/'>gem</a>, <a class='category' href='/blog/categories/guide/'>guide</a>, <a class='category' href='/blog/categories/ruby/'>ruby</a>
+  
+</span>
+
+
+    </p>
+    
+      <div class="sharing">
+  
+  <a href="http://twitter.com/share" class="twitter-share-button" data-url="http://Chris911.github.io/blog/2014/08/10/writing-a-ruby-gem-with-c-extension/" data-via="christophend" data-counturl="http://Chris911.github.io/blog/2014/08/10/writing-a-ruby-gem-with-c-extension/" >Tweet</a>
+  
+  
+  
+</div>
+
+    
+    <p class="meta">
+      
+      
+    </p>
+  </footer>
+</article>
+
+  <section>
+    <h1>Comments</h1>
+    <div id="disqus_thread" aria-live="polite"><noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+</div>
+  </section>
+
+</div>
+
+<aside class="sidebar">
+  
+    <style type="text/css">
+#icons_container {
+  padding-top: 20px;
+  padding-bottom: 20px;
+}
+#icons_container img {
+  border: 0px;
+  margin-right: 10px;
+}
+</style>
+
+<div id="icons_container">
+  <a href="https://github.com/Chris911"><img src="/images/glyphicons/glyphicons_401_github.png" alt="GitHub"></a>
+  <a href="http://www.linkedin.com/in/christophenauddulude"><img src="/images/glyphicons/glyphicons_397_linked_in.png" alt="LinkedIn"></a>
+  <a href="https://twitter.com/ChristopheND"><img src="/images/glyphicons/glyphicons_411_twitter.png" alt="Twitter"></a>
+  <a href="mailto:christophe.naud.dulude@gmail.com"><img src="/images/glyphicons/glyphicons_419_e-mail.png" alt="Email"></a>
+</div>
+
+
+<style type="text/css">
+.circular {
+	width: 120px;
+	height: 120px;
+	margin-left: 20px;
+	border-radius: 50%;
+	-moz-border-radius: 50%;
+	-webkit-border-radius: 50%;
+	background: url(http://www.gravatar.com/avatar/a8428b2869b19d3d7781a6825e1e1980?s=120) no-repeat center;
+	box-shadow: 0 0 8px rgba(0, 0, 0, .8);
+	-webkit-box-shadow: 0 0 8px rgba(0, 0, 0, .8);
+	-moz-box-shadow: 0 0 8px rgba(0, 0, 0, .8);
+}
+</style>
+
+<section>
+	<span>
+		<div class="circular"></div>
+	</span>
+</section>
+
+<section>
+  <h1>Recent Posts</h1>
+  <ul id="recent_posts">
+    
+      <li class="post">
+        <a href="/blog/2014/08/10/writing-a-ruby-gem-with-c-extension/">Writing a Ruby gem with C extension</a>
+      </li>
+    
+  </ul>
+</section>
+
+<section>
+  <h1>GitHub Repos</h1>
+  <ul id="gh_repos">
+    <li class="loading">Status updating...</li>
+  </ul>
+  
+  <a href="https://github.com/Chris911">@Chris911</a> on GitHub
+  
+  <script type="text/javascript">
+    $.domReady(function(){
+        if (!window.jXHR){
+            var jxhr = document.createElement('script');
+            jxhr.type = 'text/javascript';
+            jxhr.src = '/javascripts/libs/jXHR.js';
+            var s = document.getElementsByTagName('script')[0];
+            s.parentNode.insertBefore(jxhr, s);
+        }
+
+        github.showRepos({
+            user: 'Chris911',
+            count: 3,
+            skip_forks: true,
+            target: '#gh_repos'
+        });
+    });
+  </script>
+  <script src="/javascripts/github.js" type="text/javascript"> </script>
+</section>
+
+
+<section>
+  <h1>On Twitter:</h1>
+  <div>
+    <p><br /><a href="http://twitter.com/christophend" target="_blank">My Tweets, on Twitter.</a></p>
+    <a href="http://twitter.com/christophend" class="twitter-follow-button" data-show-count="">Follow @christophend</a>
+  </div>
+</section>
+
+  
+</aside>
+
+
+      </div>
+    </div>
+    <footer role="contentinfo"><p>
+  Copyright &copy; 2014 - Christophe Naud-Dulude -
+  <span class="credit">Powered by <a href="http://octopress.org">Octopress</a>. Design by <a href="http://octopressthemes.com">Octopress Themes</a></span>
+</p>
+
+</footer>
+    
+
+<script type="text/javascript">
+      var disqus_shortname = 'chris911';
+      
+        
+        // var disqus_developer = 1;
+        var disqus_identifier = 'http://Chris911.github.io/blog/2014/08/10/writing-a-ruby-gem-with-c-extension/';
+        var disqus_url = 'http://Chris911.github.io/blog/2014/08/10/writing-a-ruby-gem-with-c-extension/';
+        var disqus_script = 'embed.js';
+      
+    (function () {
+      var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+      dsq.src = 'http://' + disqus_shortname + '.disqus.com/' + disqus_script;
+      (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    }());
+</script>
+
+
+
+
+
+
+
+  <script type="text/javascript">
+    (function(){
+      var twitterWidgets = document.createElement('script');
+      twitterWidgets.type = 'text/javascript';
+      twitterWidgets.async = true;
+      twitterWidgets.src = 'http://platform.twitter.com/widgets.js';
+      document.getElementsByTagName('head')[0].appendChild(twitterWidgets);
+    })();
+  </script>
+
+
+
+
+
+  </div>
+</body>
+</html>
